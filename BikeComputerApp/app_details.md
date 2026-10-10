@@ -8,7 +8,8 @@ At the moment the app runs entirely on **mock data**. This document covers:
 2. [Project structure](#2-project-structure)
 3. [Backend API contract](#3-backend-api-contract): what the C# API needs to return
 4. [Wiring the backend into the app](#4-wiring-the-backend-into-the-app)
-5. [Notes for further development](#5-notes-for-further-development)
+5. [Ride sync flow](#5-ride-sync-flow): device → app → backend → app
+6. [Notes for further development](#6-notes-for-further-development)
 
 ---
 
@@ -223,7 +224,7 @@ These aren't used by the app yet; they're listed so the backend design can plan 
 | `GET /api/stats?period=week\|month\|year&date=YYYY-MM-DD` | Server-side aggregates for the Overview (totals, chart buckets, personal bests). Replaces the client-side math in `utils/activity-stats.ts` once ride counts grow. Return chart buckets as `[{ "start": ISO, "distanceMeters": number }]` and let the app format the labels. |
 | `PATCH /api/activities/{id}` | Rename a ride, add notes. |
 | `DELETE /api/activities/{id}` | Delete a ride. |
-| `POST /api/activities` (upload) | Upload a ride recorded on the device (see "Sync flow" in §5). |
+| `POST /api/activities` (upload) | Upload a ride synced from the device. Fully specified in [§5](#5-ride-sync-flow). |
 | `PATCH /api/me` / `PUT /api/me/preferences` | Edit profile, and store unit/appearance preferences server-side. |
 | `POST /api/auth/...` | Sign up / sign in / refresh token. |
 | `GET /api/devices`, `POST /api/devices` | Pair and manage bike computers. |
@@ -295,21 +296,148 @@ Then delete `src/data/mock-data.ts` along with its import.
 - **Writes:** for anything that changes data (rename, delete, upload), use TanStack Query `useMutation` and invalidate `queryKeys.activities` on success, so lists refresh automatically.
 - **Query defaults:** tune them on the `QueryClient` in `src/app/_layout.tsx`. `staleTime`, `retry` and refetch on app focus via `focusManager` with React Native's `AppState` are the main ones.
 
+## 5. Ride sync flow
+
+**Decision:** rides travel **ESP32 → Bluetooth LE → app → backend**. The app uploads the raw ride, the backend processes it into an `Activity`, and the app shows the result.
+
+```mermaid
+sequenceDiagram
+    participant D as ESP32
+    participant A as App
+    participant Q as Local queue (on phone)
+    participant B as C# backend
+
+    A->>D: BLE: list unsynced rides
+    D-->>A: ride ids
+    A->>D: BLE: send ride <deviceRideId>
+    D-->>A: raw ride file (chunked)
+    A->>Q: save file, status = pending
+    A->>B: POST /api/activities (multipart)
+    B->>B: parse + compute summary
+    B-->>A: 201 Created + Activity (or 200 if already uploaded)
+    A->>Q: mark uploaded, remove file
+    A->>D: BLE: ack <deviceRideId> (safe to delete)
+    A->>A: invalidate activities query → lists refresh
+```
+
+### Ground rules
+
+1. **The backend is the source of truth for ride stats.** The device sends raw data; the backend computes distance, moving time, elevation and speeds. The app never computes ride summaries itself, so every client sees the same numbers.
+2. **Uploads are idempotent.** Every ride has a stable ID assigned by the ESP32 (`deviceRideId`, e.g. a counter or the start timestamp). The backend treats a repeat upload of the same `(deviceId, deviceRideId)` as the same ride and returns the existing activity. Retries can therefore never create duplicates. Enforce this with a **unique index** on those two columns, not only an "if exists" check, so two uploads racing each other can't both insert.
+3. **The device only deletes after the backend confirms.** The app sends the BLE "ack/delete" for a ride only after the backend returns `200` or `201`. If anything fails in between, the ride is still on the device and is retried on the next sync.
+4. **Works offline.** Rides received over BLE are written to a local queue on the phone **before** uploading. If there's no network, they wait there and upload automatically once the phone is back online or the app returns to the foreground.
+
+### `POST /api/activities`: upload a ride
+
+**Request:** `multipart/form-data`. Multipart avoids base64-encoding the file (which adds ~33% to the size) and maps directly to `IFormFile` in ASP.NET.
+
+| Form field | Type | Notes |
+| --- | --- | --- |
+| `deviceId` | string | The bike computer's id (matches `BikeComputer.id`) |
+| `deviceRideId` | string | Stable per-ride id from the device. Used for idempotency. |
+| `format` | string | Format of the raw file, e.g. `"fit"`, `"gpx"`, or `"bcr-v1"` for a custom binary format. Versioning it now lets the firmware evolve. |
+| `firmwareVersion` | string | Lets the backend handle format quirks per firmware version, and lets us show "update available". |
+| `ride` | file | The raw ride file as received from the device |
+
+**Responses:**
+
+| Status | When | Body |
+| --- | --- | --- |
+| `201 Created` | New ride processed | `Activity` (same shape as `GET /api/activities/{id}`), plus a `Location: /api/activities/{id}` header |
+| `200 OK` | This `(deviceId, deviceRideId)` was already uploaded | The existing `Activity`. **The app treats this as success**, so it still acks the device. |
+| `400 Bad Request` | Missing fields | ProblemDetails |
+| `413 Payload Too Large` | File over the size limit | ProblemDetails. Pick a limit that comfortably fits a long ride, e.g. 20 MB. |
+| `422 Unprocessable Entity` | File can't be parsed, or the ride has no usable GPS data | ProblemDetails with a readable `detail`. **The app should not retry** these: it shows the ride as "failed" and lets the user dismiss it. |
+| `401` / `5xx` / network error | Not signed in / server problem | The app keeps the ride queued and retries later, with backoff. |
+
+`Activity` should gain one field, so the app can match uploads to rides and show which device rides are already on the server:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `deviceRideId` | string | Echo of the uploaded id |
+
+(Add it to `src/types/activity.ts` and the C# DTO when this endpoint is built.)
+
+**C# sketch (ASP.NET Core minimal API, .NET 8+):**
+
+```csharp
+public record RideUpload(
+    string DeviceId, string DeviceRideId, string Format, string FirmwareVersion, IFormFile Ride);
+
+app.MapPost("/api/activities", async (
+        [FromForm] RideUpload upload, AppDbContext db, IRideProcessor processor, ClaimsPrincipal user) =>
+    {
+        var existing = await db.Activities.SingleOrDefaultAsync(a =>
+            a.DeviceId == upload.DeviceId && a.DeviceRideId == upload.DeviceRideId);
+        if (existing is not null) return Results.Ok(existing.ToDto());
+
+        // Parse the raw file and compute distance, moving time, elevation, speeds…
+        var result = await processor.ProcessAsync(upload.Ride.OpenReadStream(), upload.Format);
+        if (!result.Success)
+            return Results.Problem(result.Error, statusCode: StatusCodes.Status422UnprocessableEntity);
+
+        var activity = result.ToEntity(user.GetUserId(), upload.DeviceId, upload.DeviceRideId);
+        db.Activities.Add(activity);
+        await db.SaveChangesAsync(); // unique index (DeviceId, DeviceRideId) guards against races
+
+        return Results.Created($"/api/activities/{activity.Id}", activity.ToDto());
+    })
+    .RequireAuthorization()
+    .DisableAntiforgery(); // token-authenticated API, not a browser form
+```
+
+Store the raw file too (blob storage or disk), not just the computed summary. Then we can reprocess every ride if the processing logic improves, and serve `GET /api/activities/{id}/track` later.
+
+### Processing: synchronous now, asynchronous later if needed
+
+Start **synchronous**: process the ride inside the request and return the finished `Activity`. Computing summaries from one ride's GPS points should be fast, and it keeps the app simple.
+
+If processing later becomes slow (map matching, segment detection, weather lookups…), switch to **asynchronous** without breaking the app's flow:
+
+- `POST /api/activities` returns `202 Accepted` with `{ "uploadId": "...", "status": "processing" }` and a `Location: /api/uploads/{uploadId}` header.
+- `GET /api/uploads/{uploadId}` returns `{ "status": "processing" | "ready" | "failed", "activity"?: Activity, "error"?: string }`.
+- The app polls that every few seconds while it's open, or the backend sends a push notification (`expo-notifications`) when the ride is ready.
+
+The device ack can still happen as soon as the backend **accepts** the upload (`202`), because the raw file is then safe on the server.
+
+### App side (to build)
+
+Suggested module layout, outside `src/app/` since none of these are screens:
+
+```
+src/sync/
+├── ble/              # BLE connection, pairing, protocol (list rides, fetch ride in chunks, ack)
+├── queue.ts          # local pending-upload queue (expo-sqlite table + files in expo-file-system)
+├── upload.ts         # POST /api/activities, maps responses to: done | retry later | failed
+└── use-sync.ts       # hook driving the flow + exposing sync state to the UI
+```
+
+- **Queue states:** `pending` → `uploading` → `uploaded` (then removed) or `failed` (a `422`, kept until the user dismisses it). Network and server errors go back to `pending`, with backoff.
+- **Triggers:** after a BLE sync, when the app comes to the foreground (`AppState`), and when the network comes back. A manual "Sync now" button on the Profile/device screen.
+- **UI states:** "Connecting to bike computer…" → "Receiving ride 2 of 3…" → "Uploading…" → the new ride appears in the list. Show queued rides at the top of Activities as "Waiting to upload" so the rider knows the ride wasn't lost.
+- **Refreshing data:** after each successful upload, call `queryClient.invalidateQueries({ queryKey: queryKeys.activities })`. The Overview, Activities list and Profile totals all update on their own.
+- **Permissions:** Bluetooth usage strings in `app.json` (`NSBluetoothAlwaysUsageDescription` on iOS; Bluetooth scan/connect permissions on Android), normally set through the BLE library's config plugin. A rebuild (`npx expo run:ios`) is required after adding the library.
+- **Background sync** (syncing without opening the app) is possible but limited on iOS. Treat it as a later enhancement. For v1, sync while the app is open.
+
+### To agree with the firmware side
+
+- The BLE protocol: service and characteristic UUIDs, the commands (list rides, fetch ride, ack/delete), chunk size, and how to resume an interrupted transfer.
+- The raw ride file format and its version (`format` field), plus what's recorded per point (time, lat, lon, elevation, speed; later maybe cadence and heart rate).
+- How `deviceRideId` is generated, so it's unique and stable across reboots.
+- How long rides stay on the device if they're never acked, given the ESP32's limited storage.
+
 ---
 
-## 5. Notes for further development
+## 6. Notes for further development
 
-### Open design decision: how rides get from the ESP32 to the backend
+### Device → backend transport
 
-This choice drives a lot of the app work, so we should decide it early.
+**Decided:** Bluetooth LE through the phone ([§5](#5-ride-sync-flow)). Alternatives we considered, in case requirements change:
 
-| Option | How it works | App impact |
-| --- | --- | --- |
-| **A. Bluetooth LE via the phone** | ESP32 → BLE → app → `POST /api/activities` | Needs a BLE library (e.g. `react-native-ble-plx`), which our development-build workflow already supports. Needs Bluetooth permission strings in `app.json`, and pairing/sync UI. Works without Wi‑Fi on the device. |
-| **B. Wi‑Fi direct to the backend** | ESP32 joins Wi‑Fi → uploads to the API itself | Simplest app; it just reads from the API. Requires Wi‑Fi credentials provisioned on the device and device authentication on the API. |
-| **C. Hybrid** | BLE for setup and Wi‑Fi provisioning, Wi‑Fi for uploads | Combines the best of both; most work. |
+- **Wi‑Fi direct:** the ESP32 uploads to the API itself. The app gets simpler, but the device needs Wi‑Fi credentials provisioned and its own authentication against the API.
+- **Hybrid:** BLE for setup and Wi‑Fi provisioning, Wi‑Fi for uploads.
 
-Whichever we choose, agree on a **ride file format** between firmware and backend. FIT and GPX are standard formats that other apps (e.g. Strava) can import; a compact custom binary format is easier to write on the ESP32. The backend should compute the summary fields (distance, moving time, elevation, speeds) from the raw track so all clients agree.
+Moving to either later mostly means the ESP32 calls the same `POST /api/activities` endpoint, so the backend design in §5 still holds.
 
 ### Suggested roadmap
 
@@ -320,7 +448,7 @@ Whichever we choose, agree on a **ride file format** between firmware and backen
 3. **Persist preferences:** save appearance and units locally (e.g. `expo-sqlite/kv-store`), then sync them to `/api/me/preferences`. See the TODO in `src/providers/preferences-provider.tsx`.
 4. **Route maps:** add a map to the ride detail screen (`expo-maps` or `react-native-maps`), drawing the polyline from `/activities/{id}/track`. Replace the "Route map coming soon" placeholder in `src/app/activities/[id].tsx`.
 5. **Ride detail charts:** speed and elevation over distance. When we need axes, tooltips or scrubbing, adopt a charting library (e.g. `victory-native` or `react-native-gifted-charts`) instead of extending the hand-built `MileageChart`.
-6. **Device management and sync UI:** pairing flow, a "Sync now" button, sync status/progress, and firmware version and update prompts on the Profile tab.
+6. **Ride sync ([§5](#5-ride-sync-flow)):** BLE pairing and protocol, the local upload queue, `POST /api/activities`, sync status UI, and a "Sync now" button. Then firmware version and update prompts on the Profile tab.
 7. **Pagination:** infinite scroll on the Activities list (§3).
 8. **Pull stats to the server:** use `/api/stats` for the Overview once ride counts are large.
 9. **Editing:** rename or delete rides, ride notes, bike/gear tracking.
