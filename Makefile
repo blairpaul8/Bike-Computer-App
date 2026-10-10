@@ -1,20 +1,25 @@
-IMAGE_NAME := test-dev-env
+IMAGE_NAME := appdev
 CONTAINER_NAME := app
-BUSID ?=
-ESP_PORT ?= /dev/ttyUSB0
 
-.PHONY: docker-build docker-run docker-start docker-stop docker-shell build
+.PHONY: docker-build docker-run docker-start docker-stop docker-shell docker-rm build
 
-# Docker commands
 docker-build:
 	docker build -t $(IMAGE_NAME) .
 
-
 docker-run:
-	docker run -dit \
-		-v $(shell pwd):/workspace \
-		--name $(CONTAINER_NAME) \
-		$(IMAGE_NAME)
+	@if [ -z "$$(docker ps -aq -f name=^$(CONTAINER_NAME)$$)" ]; then \
+		echo "Creating $(CONTAINER_NAME)..."; \
+		docker run -dit \
+			--network host \
+			-v $(CURDIR):/workspace \
+			-w /workspace \
+			--name $(CONTAINER_NAME) \
+			$(IMAGE_NAME); \
+	elif [ -z "$$(docker ps -q -f name=^$(CONTAINER_NAME)$$)" ]; then \
+		echo "Starting $(CONTAINER_NAME)..."; \
+		docker start $(CONTAINER_NAME); \
+	fi
+	@docker exec -it -w /workspace $(CONTAINER_NAME) /bin/bash -i
 
 docker-start:
 	docker start $(CONTAINER_NAME)
@@ -23,11 +28,7 @@ docker-stop:
 	docker stop $(CONTAINER_NAME)
 
 docker-shell:
-	docker exec -it $(CONTAINER_NAME) /bin/bash -i
+	docker exec -it -w /workspace $(CONTAINER_NAME) /bin/bash -i
 
-# Commands for packaging and flashing code
-build:
-	idf.py build
-
-flash:
-	idf.py -p /dev/ttyUSB0 flash monitor
+docker-rm:
+	-docker rm -f $(CONTAINER_NAME)
