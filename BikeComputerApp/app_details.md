@@ -14,19 +14,22 @@ At the moment the app runs entirely on **mock data**. This document covers:
 
 ## 1. Running the app
 
+We use **development builds, not Expo Go**. The app will need Bluetooth to talk to the bike computer, and Expo Go can't load custom native modules like a BLE library.
+
 ```bash
 cd BikeComputerApp
 npm install
-npx expo start          # then press `i` for the iOS simulator, `a` for Android, `w` for web
+npx expo run:ios        # builds the native app with Xcode, installs it on the iOS simulator, starts Metro
+npx expo run:android    # same for Android (needs Android Studio / an emulator)
 ```
 
-**iOS simulator on macOS:** install Xcode and at least one iOS simulator first. From `npx expo start`, pressing `i` opens the app in Expo Go on the simulator. Some native modules aren't included in Expo Go, so if a screen fails because one is missing, or once we add Bluetooth or other native libraries, make a development build instead:
+- **Requirements (iOS):** a Mac with Xcode, at least one iOS simulator, and CocoaPods (installed automatically by the Expo CLI when needed).
+- **Device:** to run on a physical iPhone, use `npx expo run:ios --device`. That requires an Apple developer account and code signing set up in Xcode.
+- **When to rebuild:** only after **native** changes, i.e. a newly added package with native code, `app.json` / config plugin edits, or an SDK upgrade. JS/TS changes reload through Metro without a rebuild.
+- **Recommended next step:** add `expo-dev-client` (`npx expo install expo-dev-client`). It gives the dev build a launcher and dev menu, makes `npx expo start` target the dev build instead of Expo Go, and is needed for `eas build --profile development` builds teammates can install.
+- **Web:** `npx expo start --web` still works for quick UI checks, but it can't exercise Bluetooth or other native features.
 
-```bash
-npx expo run:ios        # builds the native project locally with Xcode and launches the simulator
-```
-
-`ios/` and `android/` are **generated** (Continuous Native Generation). Don't edit them by hand. Native configuration goes in `app.json` or config plugins.
+`ios/` and `android/` are **generated** by `run:ios` / `run:android` (Continuous Native Generation) and git-ignored. Don't edit them by hand: native configuration goes in `app.json` or config plugins. If they get into a bad state, delete them, or run `npx expo prebuild --clean`, and rebuild.
 
 Checks to run before committing:
 
@@ -302,7 +305,7 @@ This choice drives a lot of the app work, so we should decide it early.
 
 | Option | How it works | App impact |
 | --- | --- | --- |
-| **A. Bluetooth LE via the phone** | ESP32 → BLE → app → `POST /api/activities` | Needs a BLE library (e.g. `react-native-ble-plx`), which means a **development build** (no Expo Go), Bluetooth permission strings in `app.json`, and pairing/sync UI. Works without Wi‑Fi on the device. |
+| **A. Bluetooth LE via the phone** | ESP32 → BLE → app → `POST /api/activities` | Needs a BLE library (e.g. `react-native-ble-plx`), which our development-build workflow already supports. Needs Bluetooth permission strings in `app.json`, and pairing/sync UI. Works without Wi‑Fi on the device. |
 | **B. Wi‑Fi direct to the backend** | ESP32 joins Wi‑Fi → uploads to the API itself | Simplest app; it just reads from the API. Requires Wi‑Fi credentials provisioned on the device and device authentication on the API. |
 | **C. Hybrid** | BLE for setup and Wi‑Fi provisioning, Wi‑Fi for uploads | Combines the best of both; most work. |
 
@@ -333,7 +336,7 @@ Whichever we choose, agree on a **ride file format** between firmware and backen
 ### Things to keep in mind
 
 - **Read the SDK 57 docs, not memory:** Expo changes APIs between SDKs. See `AGENTS.md` for the doc links.
-- **Expo Go vs. dev builds:** anything with custom native code (BLE, some map libraries) won't run in Expo Go. Once one of those is added, use `npx expo run:ios` / `eas build --profile development`.
+- **Native dependencies mean a rebuild:** after adding any package with native code (BLE, maps, secure store…), rerun `npx expo run:ios` / `run:android`. A JS reload isn't enough, and the error usually looks like "Cannot find native module". For teammates without Xcode, use `eas build --profile development`.
 - **Native tabs** (`expo-router/unstable-native-tabs`) are still marked unstable. Watch the Expo changelog when upgrading SDKs. Android supports at most 5 tabs.
 - **Time zones:** the server stores UTC. The app groups rides by the phone's **local** day/week/month, and weeks start on Monday (`utils/activity-stats.ts`). If the server ever computes period stats, it needs the user's time zone (send it as a query param or store it on the profile).
 - **Mock data** (`src/data/mock-data.ts`) is generated relative to "now", so the Overview always has data this week. It's handy for UI work; it could live behind a flag (e.g. `EXPO_PUBLIC_USE_MOCKS=1`) rather than being deleted, if that helps frontend work move ahead of the backend.
