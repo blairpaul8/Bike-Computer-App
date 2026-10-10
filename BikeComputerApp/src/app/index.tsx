@@ -1,98 +1,172 @@
-import * as Device from 'expo-device';
-import { Platform, StyleSheet } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 
-import { AnimatedIcon } from '@/components/animated-icon';
-import { HintRow } from '@/components/hint-row';
+import { useActivities } from '@/api/queries';
+import { ActivityRow } from '@/components/activity/activity-row';
+import { MileageChart } from '@/components/activity/mileage-chart';
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { WebBadge } from '@/components/web-badge';
-import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { Card, SectionTitle } from '@/components/ui/card';
+import { EmptyState, ErrorState, LoadingState } from '@/components/ui/query-state';
+import { Screen } from '@/components/ui/screen';
+import { SegmentedControl } from '@/components/ui/segmented-control';
+import { StatGrid, StatTile } from '@/components/ui/stat-tile';
+import { Spacing } from '@/constants/theme';
+import { usePreferences } from '@/providers/preferences-provider';
+import {
+  activitiesInPeriod,
+  buildChartBuckets,
+  startOfWeek,
+  summarize,
+  type Period,
+} from '@/utils/activity-stats';
+import {
+  distanceUnit,
+  formatDistance,
+  formatDuration,
+  formatElevation,
+  formatShortDate,
+  formatSpeed,
+} from '@/utils/format';
 
-function getDevMenuHint() {
-  if (Platform.OS === 'web') {
-    return <ThemedText type="small">use browser devtools</ThemedText>;
-  }
-  if (Device.isDevice) {
+const PERIOD_OPTIONS = [
+  { value: 'week', label: 'Week' },
+  { value: 'month', label: 'Month' },
+  { value: 'year', label: 'Year' },
+] as const;
+
+const PERIOD_LABELS: Record<Period, string> = {
+  week: 'This week',
+  month: 'This month',
+  year: 'This year',
+};
+
+export default function OverviewScreen() {
+  const { units } = usePreferences();
+  const { data: activities, isPending, error, refetch, isRefetching } = useActivities();
+  const [period, setPeriod] = useState<Period>('week');
+
+  if (isPending) {
     return (
-      <ThemedText type="small">
-        shake device or press <ThemedText type="code">m</ThemedText> in terminal
-      </ThemedText>
+      <Screen title="Overview">
+        <LoadingState />
+      </Screen>
     );
   }
-  const shortcut = Platform.OS === 'android' ? 'cmd+m (or ctrl+m)' : 'cmd+d';
-  return (
-    <ThemedText type="small">
-      press <ThemedText type="code">{shortcut}</ThemedText>
-    </ThemedText>
-  );
-}
 
-export default function HomeScreen() {
+  if (error) {
+    return (
+      <Screen title="Overview">
+        <ErrorState message={error.message} onRetry={refetch} />
+      </Screen>
+    );
+  }
+
+  const now = new Date();
+  const periodActivities = activitiesInPeriod(activities, period, now);
+  const summary = summarize(periodActivities);
+  const buckets = buildChartBuckets(activities, period, now);
+  const currentIndex =
+    period === 'year'
+      ? now.getMonth()
+      : period === 'month'
+        ? now.getDate() - 1
+        : (now.getDay() + 6) % 7;
+  const thisWeek = activitiesInPeriod(activities, 'week', now);
+
   return (
-    <ThemedView style={styles.container}>
-      <SafeAreaView style={styles.safeArea}>
-        <ThemedView style={styles.heroSection}>
-          <AnimatedIcon />
-          <ThemedText type="title" style={styles.title}>
-            Welcome to&nbsp;Expo
+    <Screen
+      title="Overview"
+      subtitle={`Week of ${formatShortDate(startOfWeek(now).toISOString())}`}
+      refreshing={isRefetching}
+      onRefresh={refetch}>
+      <Card
+        title="Distance"
+        action={
+          <SegmentedControl
+            accessibilityLabel="Chart period"
+            options={PERIOD_OPTIONS}
+            value={period}
+            onChange={setPeriod}
+          />
+        }>
+        <View style={styles.total}>
+          <ThemedText type="stat">
+            {formatDistance(summary.distanceMeters, units, { withUnit: false })}
           </ThemedText>
-        </ThemedView>
-
-        <ThemedText type="code" style={styles.code}>
-          get started
-        </ThemedText>
-
-        <ThemedView type="backgroundElement" style={styles.stepContainer}>
-          <HintRow
-            title="Try editing"
-            hint={<ThemedText type="code">src/app/index.tsx</ThemedText>}
+          <ThemedText type="small" themeColor="textSecondary">
+            {distanceUnit(units)} · {PERIOD_LABELS[period].toLowerCase()}
+          </ThemedText>
+        </View>
+        <MileageChart buckets={buckets} units={units} currentIndex={currentIndex} />
+        <StatGrid>
+          <StatTile label="Rides" value={String(summary.count)} />
+          <StatTile label="Moving time" value={formatDuration(summary.movingTimeSeconds)} />
+          <StatTile label="Elevation" value={formatElevation(summary.elevationGainMeters, units)} />
+          <StatTile
+            label="Avg distance"
+            value={formatDistance(
+              summary.count ? summary.distanceMeters / summary.count : 0,
+              units
+            )}
           />
-          <HintRow title="Dev tools" hint={getDevMenuHint()} />
-          <HintRow
-            title="Fresh start"
-            hint={<ThemedText type="code">npm run reset-project</ThemedText>}
-          />
-        </ThemedView>
+        </StatGrid>
+      </Card>
 
-        {Platform.OS === 'web' && <WebBadge />}
-      </SafeAreaView>
-    </ThemedView>
+      <Card title={`Highlights · ${PERIOD_LABELS[period]}`}>
+        {summary.bests ? (
+          <StatGrid>
+            <StatTile
+              label="Longest ride"
+              value={formatDistance(summary.bests.longest.distanceMeters, units)}
+              detail={formatShortDate(summary.bests.longest.startTime)}
+            />
+            <StatTile
+              label="Fastest avg"
+              value={formatSpeed(summary.bests.fastest.averageSpeedMps, units)}
+              detail={formatShortDate(summary.bests.fastest.startTime)}
+            />
+            <StatTile
+              label="Biggest climb"
+              value={formatElevation(summary.bests.biggestClimb.elevationGainMeters, units)}
+              detail={formatShortDate(summary.bests.biggestClimb.startTime)}
+            />
+            <StatTile
+              label="Longest time"
+              value={formatDuration(summary.bests.longestDuration.movingTimeSeconds)}
+              detail={formatShortDate(summary.bests.longestDuration.startTime)}
+            />
+          </StatGrid>
+        ) : (
+          <ThemedText type="small" themeColor="textSecondary">
+            No rides yet in this period.
+          </ThemedText>
+        )}
+      </Card>
+
+      <SectionTitle>This week&apos;s rides</SectionTitle>
+      {thisWeek.length === 0 ? (
+        <EmptyState
+          title="No rides this week"
+          message="Sync your bike computer to see your latest rides here."
+        />
+      ) : (
+        <View style={styles.list}>
+          {thisWeek.map((activity) => (
+            <ActivityRow key={activity.id} activity={activity} units={units} />
+          ))}
+        </View>
+      )}
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
+  total: {
     flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: Spacing.two,
   },
-  safeArea: {
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    alignItems: 'center',
-    gap: Spacing.three,
-    paddingBottom: BottomTabInset + Spacing.three,
-    maxWidth: MaxContentWidth,
-  },
-  heroSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    paddingHorizontal: Spacing.four,
-    gap: Spacing.four,
-  },
-  title: {
-    textAlign: 'center',
-  },
-  code: {
-    textTransform: 'uppercase',
-  },
-  stepContainer: {
-    gap: Spacing.three,
-    alignSelf: 'stretch',
-    paddingHorizontal: Spacing.three,
-    paddingVertical: Spacing.four,
-    borderRadius: Spacing.four,
+  list: {
+    gap: Spacing.two,
   },
 });
