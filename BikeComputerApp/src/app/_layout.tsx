@@ -1,17 +1,42 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { useState } from 'react';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
+import { PreferencesProvider, usePreferences } from '@/providers/preferences-provider';
 
-SplashScreen.preventAutoHideAsync();
+export default function RootLayout() {
+  const [queryClient] = useState(() => new QueryClient());
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
+    <QueryClientProvider client={queryClient}>
+      <PreferencesProvider initialColorScheme="dark">
+        <ThemedNavigation />
+      </PreferencesProvider>
+    </QueryClientProvider>
+  );
+}
+
+/** Keeps React Navigation's theme (headers, backgrounds) in sync with our color tokens. */
+function ThemedNavigation() {
+  const { colorScheme, colors } = usePreferences();
+  const base = colorScheme === 'dark' ? DarkTheme : DefaultTheme;
+
+  return (
+    <ThemeProvider
+      value={{
+        ...base,
+        colors: {
+          ...base.colors,
+          primary: colors.accent,
+          background: colors.background,
+          card: colors.surface,
+          text: colors.text,
+          border: colors.border,
+        },
+      }}>
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       <AppTabs />
     </ThemeProvider>
   );
