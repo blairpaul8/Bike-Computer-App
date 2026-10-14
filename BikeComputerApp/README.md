@@ -7,13 +7,13 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 1. Install dependencies
 
    ```bash
-   npm install
+   npm install expo
    ```
 
 2. Start the app
 
    ```bash
-   npx expo start
+   npx expo run:ios
    ```
 
 In the output, you'll find options to open the app in a
@@ -24,6 +24,32 @@ In the output, you'll find options to open the app in a
 - [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+
+## Debugging
+
+If you recieve this error: Script '[CP-User] Build ExpoModulesJSI xcframework' failed
+   └─Pods/ExpoModulesJSI
+1 | #import "/Users/anthonymonteagudo/Documents/SeniorDesign/Bike-Computer-App/BikeComputerApp/ios/Pods/Headers/Public/React-jsi/jsi/jsi.h"
+|         `- note: in file included from <module-includes>:1:
+2 | #import "/Users/anthonymonteagudo/Documents/SeniorDesign/Bike-Computer-App/BikeComputerApp/ios/Pods/Headers/Public/React-jsi/jsi/instrumentation.h"
+3 |
+5 warnings generated.
+2265 |
+2266 | #include <jsi/jsi-inl.h>
+2267 |
+| `- warning: umbrella header for module 'jsi' does not include header 'jsilib.h'
+/Users/anthonymonteagudo/Documents/SeniorDesign/Bike-Computer-App/BikeComputerApp/node_modules/expo-modules-jsi/apple/.DerivedData/Build/Products/Release-iphonesimulator/PackageFrameworks/ExpoModulesJSI.framework: resource fork, Finder information, or similar detritus not allowed
+
+
+❌  Command PhaseScriptExecution failed with a nonzero exit code
+** BUILD FAILED **
+
+
+› 2 error(s), and 0 warning(s)
+
+CommandError: Failed to build iOS project. "xcodebuild" exited with error code 65.
+
+Run this command: xattr -dr com.apple.FinderInfo node_modules/expo-modules-jsi
 
 ## Get a fresh project
 
