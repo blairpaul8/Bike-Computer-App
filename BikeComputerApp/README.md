@@ -25,6 +25,14 @@ In the output, you'll find options to open the app in a
 
 You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
 
+## Deploying to IPhone
+
+1. In the root of the expo app enter: `open ios/BikeComputerApp.xcworkspace`. Which will open up the project in xcode.
+1. On the left sidebar of Xcode select BikeComputerApp then select BikeComputerApp under TARGETS in the next sidebar.
+1. From the drop down menu select Signing & Capabilites.
+1. Make sure Automatically manage siging is turned on. Under the team section,
+
+
 ## Debugging
 
 If you recieve this error: Script '[CP-User] Build ExpoModulesJSI xcframework' failed
