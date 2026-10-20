@@ -30,8 +30,9 @@ You can start developing by editing the files inside the **app** directory. This
 1. In the root of the expo app enter: `open ios/BikeComputerApp.xcworkspace`. Which will open up the project in xcode.
 1. On the left sidebar of Xcode select BikeComputerApp then select BikeComputerApp under TARGETS in the next sidebar.
 1. From the drop down menu select Signing & Capabilites.
-1. Make sure Automatically manage siging is turned on. Under the team section,
-
+1. Make sure `Automatically manage siging` is turned on. Under the team section, select your Personal Team which is associated with your Apple account. If you don't have an account locate Apple Accounts in the Xcode settings to add your personal account.
+1. Now switch to your Iphone and go to settings. From there you will want to go to privacy and security. Near the bottom turn on Developer Mode. This will require you to restart your Iphone.
+1. Lastly, start up the app using `npx expo run:ios --device`. When prompted select your device.
 
 ## Debugging
 
