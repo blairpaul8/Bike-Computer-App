@@ -32,7 +32,9 @@ You can start developing by editing the files inside the **app** directory. This
 1. From the drop down menu select Signing & Capabilites.
 1. Make sure `Automatically manage siging` is turned on. Under the team section, select your Personal Team which is associated with your Apple account. If you don't have an account locate Apple Accounts in the Xcode settings to add your personal account.
 1. Now switch to your Iphone and go to settings. From there you will want to go to privacy and security. Near the bottom turn on Developer Mode. This will require you to restart your Iphone.
+1. Start the development server and keep it running, `npx expo start --dev-client`.
 1. Lastly, start up the app using `npx expo run:ios --device`. When prompted select your device.
+1. If you get an 'Untrusted Developer' error when the app opens on your Iphone, go to settings -> general -> VPN & Device Management -> trust user.
 
 ## Debugging
 
