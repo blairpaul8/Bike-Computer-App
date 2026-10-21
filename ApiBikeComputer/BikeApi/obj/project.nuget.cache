@@ -1,0 +1,16 @@
+{
+  "version": 2,
+  "dgSpecHash": "79I2n15+/OA=",
+  "success": true,
+  "projectFilePath": "/home/andyb/school/fall26/senior/App-Bike-Computer/ApiBikeComputer/BikeApi/BikeApi.csproj",
+  "expectedPackageFiles": [
+    "/home/andyb/.nuget/packages/microsoft.aspnetcore.openapi/10.0.12/microsoft.aspnetcore.openapi.10.0.12.nupkg.sha512",
+    "/home/andyb/.nuget/packages/microsoft.entityframeworkcore/10.0.13/microsoft.entityframeworkcore.10.0.13.nupkg.sha512",
+    "/home/andyb/.nuget/packages/microsoft.entityframeworkcore.abstractions/10.0.13/microsoft.entityframeworkcore.abstractions.10.0.13.nupkg.sha512",
+    "/home/andyb/.nuget/packages/microsoft.entityframeworkcore.analyzers/10.0.13/microsoft.entityframeworkcore.analyzers.10.0.13.nupkg.sha512",
+    "/home/andyb/.nuget/packages/microsoft.entityframeworkcore.inmemory/10.0.13/microsoft.entityframeworkcore.inmemory.10.0.13.nupkg.sha512",
+    "/home/andyb/.nuget/packages/microsoft.openapi/2.12.0/microsoft.openapi.2.12.0.nupkg.sha512",
+    "/home/andyb/.nuget/packages/scalar.aspnetcore/2.18.2/scalar.aspnetcore.2.18.2.nupkg.sha512"
+  ],
+  "logs": []
+}
