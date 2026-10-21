@@ -2,7 +2,11 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TERM=xterm-256color \
-    EXPO_NO_TELEMETRY=1
+    EXPO_NO_TELEMETRY=1 \
+    DOTNET_ROOT=/usr/share/dotnet \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
 
 RUN apt-get update \
     && apt-get install -y \
@@ -31,6 +35,18 @@ RUN mkdir -p /etc/apt/keyrings \
     && npm install -g eas-cli tree-sitter-cli \
     && rm -rf /var/lib/apt/lists/*
 
+# .NET SDK (includes the ASP.NET Core runtime). Override with:
+#   docker build --build-arg DOTNET_CHANNEL=9.0 -t appdev .
+ARG DOTNET_CHANNEL=10.0
+RUN apt-get update \
+    && apt-get install -y libicu74 libssl3t64 zlib1g \
+    && curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
+    && bash /tmp/dotnet-install.sh --channel "$DOTNET_CHANNEL" --install-dir "$DOTNET_ROOT" \
+    && ln -s "$DOTNET_ROOT/dotnet" /usr/local/bin/dotnet \
+    && rm -f /tmp/dotnet-install.sh \
+    && rm -rf /var/lib/apt/lists/* \
+    && dotnet --info
+
 RUN add-apt-repository ppa:neovim-ppa/unstable -y \
     && apt-get update \
     && apt-get install -y neovim \
@@ -39,6 +55,9 @@ RUN add-apt-repository ppa:neovim-ppa/unstable -y \
 ARG USERNAME=dev
 ARG USER_UID=1000
 ARG USER_GID=1000
+
+# Lets `dotnet tool install --global ...` (e.g. dotnet-ef) work for the dev user
+ENV PATH="$PATH:/home/$USERNAME/.dotnet/tools"
 
 RUN userdel -r ubuntu \
     && groupadd --gid $USER_GID $USERNAME \
