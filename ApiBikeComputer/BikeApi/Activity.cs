@@ -1,3 +1,5 @@
+// This is a good example this would represent one table in the DB.
+// Each line is a field of the table.
 public class Activity
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
